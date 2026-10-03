@@ -124,7 +124,20 @@ input[type=range]:hover::-webkit-slider-thumb{animation:ring 1.3s infinite}
   *,*::before,*::after{animation:none!important;transition:none!important}
   .w>i{transform:none}.rv{opacity:1;transform:none}
 }
+/* tips */
+#tips{list-style:none}
+#tips li{padding:18px 0;border-top:1px solid var(--line);animation:rise .6s cubic-bezier(.2,.8,.2,1) both;animation-delay:calc(var(--i)*80ms)}
+#tips li:last-child{border-bottom:1px solid var(--line)}
+#tips h3{font-size:1rem;font-weight:700;letter-spacing:-.01em;margin-bottom:4px}
+#tips p{color:var(--muted);font-size:.92rem;line-height:1.55}
+#tips li.urgent h3{color:var(--accent)}
+/* download button */
+.dl{margin-top:28px;display:inline-flex;align-items:center;gap:10px;padding:13px 22px;border-radius:999px;
+  background:var(--ink);color:var(--bg);font-weight:600;transition:transform .2s,background .2s,color .2s}
+.dl:hover{background:var(--accent);color:#fff;transform:translateY(-2px)}
+.dl:active{transform:scale(.97)}
 </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" defer></script>
 </head>
 <body>
 
@@ -153,9 +166,13 @@ input[type=range]:hover::-webkit-slider-thumb{animation:ring 1.3s infinite}
     <form id="form" onsubmit="return false"></form>
   </section>
   <aside>
-    <h2>What moves it most</h2>
-    <p class="say" id="say"></p>
-    <div id="drivers"></div>
+    <h2>What you can do next</h2>
+    <p class="say">Tips based on the readings you entered.</p>
+    <ul id="tips"></ul>
+    <button class="dl" id="dl" type="button">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0l-4.500-4.500M12 15l4.500-4.500M4 20h16"/></svg>
+      Download report
+    </button>
     <p class="note">An educational estimate from a KNN model, not a diagnosis. Talk to a clinician about your health.</p>
   </aside>
 </main>
@@ -222,15 +239,6 @@ FIELDS.forEach(f=>{
 
 /* ---------- result + drivers ---------- */
 let risk = score(state), shown = 0, token = 0, lastPct = -1;
-const nudges = {
-  age:  [v=>({...v,age:Math.min(90,v.age+10)}),   'being 10 years older'],
-  sex:  [v=>({...v,sex:v.sex==='Male'?'Female':'Male'}), 'the other sex'],
-  cp:   [v=>({...v,cp:v.cp==='Asymptomatic'?'Atypical':'Asymptomatic'}), 'a different chest pain type'],
-  bp:   [v=>({...v,bp:Math.min(200,v.bp+20)}),    '20 mmHg higher blood pressure'],
-  chol: [v=>({...v,chol:Math.min(400,v.chol+40)}),'40 mg/dL more cholesterol'],
-  hr:   [v=>({...v,hr:Math.max(60,v.hr-20)}),     'a max heart rate 20 bpm lower'],
-  ang:  [v=>({...v,ang:v.ang==='Yes'?'No':'Yes'}),'the opposite angina answer'],
-};
 async function update(){
   const t = ++token;
   const p = await predict(state);
@@ -243,25 +251,7 @@ async function update(){
   $('band').textContent = name;
   $('band').style.setProperty('--c',col);
 
-  const rows = [];
-  for(const f of FIELDS){
-    const alt = await predict(nudges[f.key][0](state));
-    rows.push({label:f.label, say:nudges[f.key][1], d:alt-p});
-  }
-  if(t!==token) return;
-  rows.sort((a,b)=>Math.abs(b.d)-Math.abs(a.d));
-  const top = rows[0], max = Math.max(.01,Math.abs(top.d));
-  const pts = Math.round(Math.abs(top.d)*100);
-  $('say').innerHTML = `Biggest lever: <b>${top.say}</b> would ${top.d>=0?'raise':'lower'} the estimate by about <b>${pts} points</b>.`;
-  const box = $('drivers');
-  if(!box.children.length) box.innerHTML = '<div class="drv"><span></span><span></span><i></i></div>'.repeat(4);
-  rows.slice(0,4).forEach((r,k)=>{
-    const el = box.children[k], w = Math.abs(r.d)/max*50, l = r.d>=0?50:50-w;
-    el.classList.remove('up','dn'); el.classList.add(r.d>=0?'up':'dn');
-    el.children[0].textContent = r.label;
-    el.children[1].textContent = (r.d>=0?'+':'−') + Math.abs(Math.round(r.d*100));
-    el.children[2].style.setProperty('--l',l+'%'); el.children[2].style.setProperty('--w',w+'%');
-  });
+  renderTips(pct);
 }
 
 /* ---------- ECG hero ---------- */
@@ -351,6 +341,100 @@ function setTheme(t){
 let saved=null; try{saved=localStorage.getItem('hc-theme')}catch(e){}
 setTheme(saved || (matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'));
 tbtn.onclick = ()=>{ const go=()=>setTheme(root.dataset.theme==='dark'?'light':'dark'); document.startViewTransition ? document.startViewTransition(go) : go(); };
+
+/* ---------- personalised tips ---------- */
+let currentTips = [], lastTipKey = '';
+function buildTips(pct){
+  const s = state, t = [], add = (p,title,text,urgent=false)=>t.push({p,title,text,urgent});
+  const maxHR = 220 - s.age, ratio = s.hr / maxHR;
+  if(s.ang==='Yes' || pct>=60)
+    add(0,'Book a doctor visit soon', s.ang==='Yes'
+      ? 'Chest pain during exercise should be checked within days. If pain comes at rest, spreads to your arm or jaw, or comes with breathlessness or sweating, call your local emergency number straight away.'
+      : 'Your estimate is high. A check-up with an ECG and blood tests can show what is really going on. This tool cannot diagnose you.', true);
+  if(s.bp>=140) add(1,`Blood pressure is high (${s.bp} mmHg)`,'Readings of 140 or more are treated as stage 2 high blood pressure. Measure it on a few different days and share the numbers with your doctor. Less salt, regular walking and good sleep all help.');
+  else if(s.bp>=130) add(2,`Blood pressure is a little high (${s.bp} mmHg)`,'130 to 139 is stage 1 high blood pressure. Cutting back on salt and packaged food and walking briskly for 30 minutes most days can bring it down.');
+  if(s.chol>=240) add(1,`Cholesterol is high (${s.chol} mg/dL)`,'Ask for a full lipid test (LDL, HDL and triglycerides). Swap fried food for vegetables, oats, nuts, pulses and fish. Your doctor may also discuss medicine.');
+  else if(s.chol>=200) add(2,`Cholesterol is borderline (${s.chol} mg/dL)`,'More fibre (oats, beans, fruit), less fried food and fewer sugary drinks usually help. Re-test in about three months.');
+  if(s.cp==='Typical') add(2,'Typical chest pain needs a check','Pressure that comes with effort and eases with rest is the pattern most linked to narrowed arteries. Get it assessed even if it comes and goes.');
+  if(s.cp==='Asymptomatic') add(5,'No symptoms does not mean no risk','Many heart problems are silent at first, so regular blood pressure and cholesterol checks matter most.');
+  if(ratio<.85) add(3,'Build your fitness gradually',`Your max heart rate of ${s.hr} bpm is ${Math.round(ratio*100)}% of the typical maximum for your age (about ${maxHR} bpm). Reaching 85% or more usually points to better fitness. Aim for 150 minutes of moderate exercise a week and build up slowly.`);
+  if(s.age>=40) add(5,'Keep up regular check-ups',`At ${s.age}, a yearly check of blood pressure, cholesterol and blood sugar is a good habit.`);
+  if(s.bp<130 && s.chol<200 && ratio>=.85 && s.ang==='No') add(3,'Your numbers look healthy','Keep doing what you are doing and re-check once a year, or sooner if anything changes.');
+  add(6,'Daily habits that protect your heart','Do not smoke, sleep 7 to 8 hours, limit alcohol, eat mostly whole foods and make time to wind down.');
+  return t.sort((a,b)=>a.p-b.p).slice(0,4);
+}
+function renderTips(pct){
+  currentTips = buildTips(pct);
+  const key = JSON.stringify(currentTips);
+  if(key===lastTipKey) return;            // only redraw when the advice changes
+  lastTipKey = key;
+  $('tips').innerHTML = currentTips.map((x,i)=>`<li class="${x.urgent?'urgent':''}" style="--i:${i}"><h3>${x.title}</h3><p>${x.text}</p></li>`).join('');
+}
+
+/* ---------- download report ---------- */
+function downloadReport(){
+  const now = new Date(), stamp = now.toISOString().slice(0,10);
+  const pct = Math.round(risk*100), band = $('band').textContent;
+  const clean = t => String(t).replace(/\u2212/g,'-');
+  const inputs = FIELDS.map(f=>[f.label, f.type==='range' ? `${state[f.key]} ${f.unit}` : state[f.key]]);
+  const J = window.jspdf && window.jspdf.jsPDF;
+
+  if(!J){ // offline fallback: plain text file
+    const txt = [`HeartCheck report - ${stamp}`,'',`Estimated risk: ${pct}% (${band})`,'','Your readings:',
+      ...inputs.map(i=>`  ${i[0]}: ${i[1]}`),'','What you can do next:',...currentTips.map(x=>`  - ${x.title}: ${x.text}`),'',
+      'Educational estimate, not a diagnosis.'].join('\n');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([txt],{type:'text/plain'}));
+    a.download = `HeartCheck-report-${stamp}.txt`; a.click();
+    setTimeout(()=>URL.revokeObjectURL(a.href),1000); return;
+  }
+
+  const doc = new J({unit:'pt',format:'a4'}), M = 48, Wd = 595 - M*2;
+  let y = 64;
+  const need = h => { if(y+h>790){ doc.addPage(); y = 64; } };
+
+  doc.setFont('helvetica','bold'); doc.setFontSize(20); doc.setTextColor(18,36,28);
+  doc.text('HeartCheck', M, y);
+  doc.setDrawColor(229,56,79); doc.setLineWidth(1.6);               // little ECG line
+  const pts = [[0,0],[14,0],[18,-6],[22,0],[30,0],[34,10],[40,-26],[46,14],[50,0],[64,0],[72,-8],[80,0],[110,0]];
+  for(let i=1;i<pts.length;i++) doc.line(M+Wd-110+pts[i-1][0], y-6+pts[i-1][1], M+Wd-110+pts[i][0], y-6+pts[i][1]);
+  doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.setTextColor(100,115,106);
+  doc.text(`Report date: ${now.toLocaleDateString(undefined,{day:'numeric',month:'long',year:'numeric'})}`, M, y+18);
+  y += 64;
+
+  doc.setFontSize(10); doc.text('Estimated chance of heart disease', M, y);
+  doc.setFont('helvetica','bold'); doc.setFontSize(54); doc.setTextColor(229,56,79);
+  doc.text(`${pct}%`, M, y+56);
+  doc.setFontSize(14); doc.setTextColor(18,36,28); doc.text(band, M+130, y+54);
+  y += 96;
+
+  const section = (title, rows) => {
+    need(30+rows.length*22);
+    doc.setFont('helvetica','bold'); doc.setFontSize(13); doc.setTextColor(18,36,28); doc.text(title, M, y);
+    doc.setDrawColor(203,217,209); doc.setLineWidth(.6); doc.line(M, y+8, M+Wd, y+8); y += 28;
+    doc.setFont('helvetica','normal'); doc.setFontSize(11);
+    rows.forEach(([a,b])=>{ doc.setTextColor(100,115,106); doc.text(a, M, y); doc.setTextColor(18,36,28); doc.text(String(b), M+Wd, y, {align:'right'}); y += 22; });
+    y += 14;
+  };
+  section('Your readings', inputs);
+  need(40); doc.setFont('helvetica','bold'); doc.setFontSize(13); doc.setTextColor(18,36,28); doc.text('What you can do next', M, y);
+  doc.setDrawColor(203,217,209); doc.setLineWidth(.6); doc.line(M, y+8, M+Wd, y+8); y += 30;
+  currentTips.forEach(x=>{
+    const body = doc.splitTextToSize(clean(x.text), Wd);
+    need(24+body.length*14+14);
+    doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.setTextColor(...(x.urgent?[229,56,79]:[18,36,28])); doc.text(clean(x.title), M, y); y += 16;
+    doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.setTextColor(100,115,106); doc.text(body, M, y); y += body.length*14+14;
+  });
+
+  need(60); doc.setFontSize(9); doc.setTextColor(100,115,106);
+  doc.text(doc.splitTextToSize('This is an educational estimate from a machine learning model. It is not a diagnosis. Please talk to a doctor about your heart health.', Wd), M, y);
+  doc.save(`HeartCheck-report-${stamp}.pdf`);
+}
+$('dl').addEventListener('click',()=>{
+  const b = $('dl'), old = b.innerHTML;
+  downloadReport(); b.textContent = 'Downloaded';
+  setTimeout(()=>{ b.innerHTML = old; }, 1800);
+});
 
 /* ---------- intro + scroll reveals + hover glow ---------- */
 const h1 = document.querySelector('h1'), words = h1.textContent;
